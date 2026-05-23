@@ -1,7 +1,12 @@
 name: Try to Create OCI VM
 on:
+  schedule:
+    - cron: "*/10 * * * *"
   # Allows you to manually run this workflow from the Actions tab
   workflow_dispatch:
+concurrency:
+  group: create-oci-vm
+  cancel-in-progress: false
 env:
   COMPARTMENT_ID: ${{ secrets.OCI_COMPARTMENT_ID }}
   IMAGE_ID: "ocid1.image.oc1.phx.aaaaaaaafyvgnzeatevnnrx2yuay2p7uarefgnbhibpwwk2gkor4r5zbumea"
