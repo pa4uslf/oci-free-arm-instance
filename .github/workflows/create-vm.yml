@@ -1,8 +1,5 @@
 name: Try to Create OCI VM
-# It will run every 5 minutes.
 on:
-  schedule:
-    - cron: "*/5 * * * *"
   # Allows you to manually run this workflow from the Actions tab
   workflow_dispatch:
 env:
@@ -52,7 +49,7 @@ jobs:
           echo "${{ secrets.SSH_PUBLIC_KEY }}" > /home/runner/my_ssh_key.pub
 
           # Run the command, capture ALL output, and use '|| true' to prevent the script from exiting early.
-          OCI_OUTPUT=$(oci compute instance launch \
+          OCI_OUTPUT=$(oci --connection-timeout 30 --read-timeout 300 compute instance launch \
             --compartment-id "$COMPARTMENT_ID" \
             --availability-domain "$AD_NAME" \
             --shape "VM.Standard.A1.Flex" \
