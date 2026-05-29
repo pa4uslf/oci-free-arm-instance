@@ -53,18 +53,47 @@ jobs:
           echo "region=${{ env.OCI_CLI_REGION }}" >> ~/.oci/config
           echo "${{ secrets.SSH_PUBLIC_KEY }}" > /home/runner/my_ssh_key.pub
 
-          # Run the command, capture ALL output, and use '|| true' to prevent the script from exiting early.
-          OCI_OUTPUT=$(oci --connection-timeout 30 --read-timeout 300 compute instance launch \
-            --compartment-id "$COMPARTMENT_ID" \
-            --availability-domain "$AD_NAME" \
-            --shape "VM.Standard.A1.Flex" \
-            --shape-config '{"ocpus":1,"memoryInGBs":6}' \
-            --subnet-id "$SUBNET_ID" \
-            --image-id "$IMAGE_ID" \
-            --ssh-authorized-keys-file "/home/runner/my_ssh_key.pub" \
-            --assign-public-ip true \
-            --display-name "fzhang-vm" \
-            --boot-volume-size-in-gbs 100 2>&1 || true)
+          OCI_CLI_VERSION=$(oci --version 2>&1 || true)
+          OCI_OUTPUT="OCI CLI version: ${OCI_CLI_VERSION}"
+          MAX_ATTEMPTS=3
+
+          for attempt in $(seq 1 "$MAX_ATTEMPTS"); do
+            echo "Starting OCI launch attempt ${attempt}/${MAX_ATTEMPTS}"
+
+            set +e
+            ATTEMPT_OUTPUT=$(oci --connection-timeout 45 --read-timeout 300 compute instance launch \
+              --compartment-id "$COMPARTMENT_ID" \
+              --availability-domain "$AD_NAME" \
+              --shape "VM.Standard.A1.Flex" \
+              --shape-config '{"ocpus":1,"memoryInGBs":6}' \
+              --subnet-id "$SUBNET_ID" \
+              --image-id "$IMAGE_ID" \
+              --ssh-authorized-keys-file "/home/runner/my_ssh_key.pub" \
+              --assign-public-ip true \
+              --display-name "fzhang-vm" \
+              --boot-volume-size-in-gbs 100 2>&1)
+            ATTEMPT_EXIT=$?
+            set -e
+
+            OCI_OUTPUT="${OCI_OUTPUT}"$'\n\n'"===== OCI launch attempt ${attempt}/${MAX_ATTEMPTS} exit ${ATTEMPT_EXIT} ====="$'\n'"${ATTEMPT_OUTPUT}"
+
+            if echo "$ATTEMPT_OUTPUT" | grep -q '"lifecycle-state": "PROVISIONING"'; then
+              break
+            fi
+
+            if echo "$ATTEMPT_OUTPUT" | grep -q "Out of host capacity."; then
+              break
+            fi
+
+            if echo "$ATTEMPT_OUTPUT" | grep -qi "connection to endpoint timed out" && [ "$attempt" -lt "$MAX_ATTEMPTS" ]; then
+              sleep_seconds=$((attempt * 20))
+              OCI_OUTPUT="${OCI_OUTPUT}"$'\n'"Retrying after endpoint timeout in ${sleep_seconds}s."
+              sleep "$sleep_seconds"
+              continue
+            fi
+
+            break
+          done
 
           # Store the log as a GitHub step output
           echo "log_data<<EOF" >> $GITHUB_OUTPUT
