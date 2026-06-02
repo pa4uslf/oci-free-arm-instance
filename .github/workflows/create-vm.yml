@@ -111,17 +111,70 @@ jobs:
 
       - name: Send Discord Notification
         if: always()
-        uses: sarisia/actions-status-discord@v1.15.4
-        with:
-          webhook: ${{ secrets.DISCORD_WEBHOOK_URL }}
-          title: "OCI VM Status: ${{ steps.create_vm.outcome }}"
-          status: ${{ steps.create_vm.outcome }}
-          color: ${{ steps.create_vm.outcome == 'success' && '0x28a745' || '0xdc3545' }}
-          description: |
-            Attempt to create A1.Flex VM.
-            **Status:** `${{ steps.create_vm.outcome }}`
+        env:
+          WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          CREATE_VM_OUTCOME: ${{ steps.create_vm.outcome }}
+          OCI_LOG_DATA: ${{ steps.create_vm.outputs.log_data }}
+        run: |
+          set -euo pipefail
 
-            **Log Output:**
-            ```json
-            ${{ steps.create_vm.outputs.log_data }}
-            ```
+          if [ -z "$WEBHOOK_URL" ]; then
+            echo "DISCORD_WEBHOOK_URL is empty or missing."
+            exit 1
+          fi
+
+          python3 - <<'PY'
+          import json
+          import os
+
+          outcome = os.environ.get("CREATE_VM_OUTCOME", "unknown")
+          log_data = os.environ.get("OCI_LOG_DATA", "")
+          max_log_chars = 3000
+
+          if len(log_data) > max_log_chars:
+              log_data = (
+                  log_data[:max_log_chars]
+                  + "\n\n... truncated; open the GitHub Actions run for the full log."
+              )
+
+          color = 0x28A745 if outcome == "success" else 0xDC3545
+          payload = {
+              "embeds": [
+                  {
+                      "title": f"OCI VM Status: {outcome}",
+                      "description": (
+                          "Attempt to create A1.Flex VM.\n"
+                          f"**Status:** `{outcome}`\n\n"
+                          "**Log Output:**\n"
+                          f"```json\n{log_data}\n```"
+                      ),
+                      "color": color,
+                  }
+              ]
+          }
+
+          with open("discord-payload.json", "w", encoding="utf-8") as f:
+              json.dump(payload, f, ensure_ascii=False)
+          PY
+
+          if [[ "$WEBHOOK_URL" == *\?* ]]; then
+            discord_url="${WEBHOOK_URL}&wait=true"
+          else
+            discord_url="${WEBHOOK_URL}?wait=true"
+          fi
+
+          http_status=$(curl -sS -o discord-response.json -w "%{http_code}" \
+            -H "Content-Type: application/json" \
+            -X POST \
+            --data @discord-payload.json \
+            "$discord_url")
+
+          echo "Discord webhook HTTP status: ${http_status}"
+
+          if [ "$http_status" -lt 200 ] || [ "$http_status" -ge 300 ]; then
+            echo "Discord webhook response body:"
+            cat discord-response.json
+            exit 1
+          fi
+
+          echo "Discord webhook accepted the notification."
